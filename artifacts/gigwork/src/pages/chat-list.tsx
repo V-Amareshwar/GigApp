@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react";
 import { useListChatRooms } from "@workspace/api-client-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -7,26 +8,57 @@ import { User, MessageSquare } from "lucide-react";
 import { Link } from "wouter";
 import { formatDistanceToNow } from "date-fns";
 import { useAuth } from "@/context/AuthContext";
+import { useSocket } from "@/context/SocketContext";
 
 export default function ChatList() {
-  const { data: rooms, isLoading } = useListChatRooms();
+  const { data: roomsData, isLoading } = useListChatRooms();
   const { user } = useAuth();
+  const { socket } = useSocket();
+
+  // Keep local state for live updates
+  const [rooms, setRooms] = useState(roomsData ?? []);
+
+  useEffect(() => {
+    if (roomsData) setRooms(roomsData);
+  }, [roomsData]);
+
+  // Listen for live chat updates to refresh last message preview
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleChatUpdate = (update: { room_id: string; last_message: string; last_message_at: string }) => {
+      setRooms((prev) => prev.map(r =>
+        r.id === update.room_id
+          ? { ...r, last_message: update.last_message, last_message_at: update.last_message_at }
+          : r
+      ).sort((a, b) => {
+        const aTime = a.last_message_at ? new Date(a.last_message_at).getTime() : new Date(a.created_at).getTime();
+        const bTime = b.last_message_at ? new Date(b.last_message_at).getTime() : new Date(b.created_at).getTime();
+        return bTime - aTime;
+      }));
+    };
+
+    socket.on("chat_update", handleChatUpdate);
+    return () => {
+      socket.off("chat_update", handleChatUpdate);
+    };
+  }, [socket]);
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">
       <h1 className="text-3xl font-bold tracking-tight">Messages</h1>
 
-      {isLoading ? (
+      {isLoading && rooms.length === 0 ? (
         <div className="space-y-3">
           {[1, 2, 3].map(i => <Skeleton key={i} className="h-24 w-full" />)}
         </div>
-      ) : rooms?.length === 0 ? (
+      ) : rooms.length === 0 ? (
         <Card>
           <CardContent className="py-12 flex flex-col items-center justify-center text-center">
             <MessageSquare className="h-12 w-12 text-muted-foreground mb-4 opacity-50" />
             <p className="text-lg font-medium">No messages yet</p>
             <p className="text-muted-foreground mt-1 text-sm max-w-md">
-              {user?.current_role === 'seeker' 
+              {user?.current_role === 'seeker'
                 ? "When an employer accepts your application, you can chat with them here."
                 : "When you accept an applicant, you can chat with them here."}
             </p>
@@ -34,7 +66,7 @@ export default function ChatList() {
         </Card>
       ) : (
         <div className="space-y-3">
-          {rooms?.map(room => (
+          {rooms.map(room => (
             <Link key={room.id} href={`/chat/${room.id}`}>
               <Card className="hover:border-primary/50 transition-colors cursor-pointer cursor-pointer">
                 <CardContent className="p-4 flex items-center gap-4">

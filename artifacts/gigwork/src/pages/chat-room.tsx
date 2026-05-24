@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useParams, useLocation } from "wouter";
 import { useGetChatMessages, useSendMessage, useListChatRooms } from "@workspace/api-client-react";
 import { Card, CardHeader, CardTitle, CardContent, CardFooter } from "@/components/ui/card";
@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/context/AuthContext";
+import { useSocket } from "@/context/SocketContext";
 import { ArrowLeft, Send, User } from "lucide-react";
 import { format } from "date-fns";
 
@@ -14,21 +15,52 @@ export default function ChatRoom() {
   const { id } = useParams<{ id: string }>();
   const [_, setLocation] = useLocation();
   const { user } = useAuth();
+  const { socket } = useSocket();
   const [content, setContent] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Note: we could fetch single room info if the API supported it, but we can also find it in the list
   const { data: rooms } = useListChatRooms();
   const room = rooms?.find(r => r.id === id);
 
-  const { data: messages, isLoading, refetch } = useGetChatMessages(id, {
-    query: { enabled: !!id, refetchInterval: 3000 } // Polling for new messages
+  // Start with REST data, then append real-time messages
+  const { data: initialMessages, isLoading } = useGetChatMessages(id, {
+    query: { enabled: !!id }
   });
 
+  const [messages, setMessages] = useState<any[]>([]);
   const sendMutation = useSendMessage();
 
+  // Sync initial REST data
   useEffect(() => {
-    // Scroll to bottom when messages load
+    if (initialMessages) {
+      setMessages(initialMessages);
+    }
+  }, [initialMessages]);
+
+  // Join socket room and listen for messages
+  useEffect(() => {
+    if (!socket || !id) return;
+
+    socket.emit("join_room", id);
+
+    const handleNewMessage = (msg: any) => {
+      setMessages((prev) => {
+        // Avoid duplicates
+        if (prev.some(m => m.id === msg.id)) return prev;
+        return [...prev, msg];
+      });
+    };
+
+    socket.on("new_message", handleNewMessage);
+
+    return () => {
+      socket.emit("leave_room", id);
+      socket.off("new_message", handleNewMessage);
+    };
+  }, [socket, id]);
+
+  // Scroll to bottom on new messages
+  useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
@@ -38,15 +70,48 @@ export default function ChatRoom() {
     e.preventDefault();
     if (!content.trim()) return;
 
-    sendMutation.mutate({ roomId: id, data: { content: content.trim() } }, {
-      onSuccess: () => {
-        setContent("");
-        refetch();
-      }
-    });
+    const trimmed = content.trim();
+
+    if (socket) {
+      // Optimistic: show immediately for the sender
+      const optimisticMsg = {
+        id: `temp_${Date.now()}`,
+        room_id: id,
+        sender_id: user?.id,
+        message_type: "text",
+        content: trimmed,
+        is_read: false,
+        sender: user,
+        created_at: new Date().toISOString(),
+      };
+      setMessages((prev) => [...prev, optimisticMsg]);
+      setContent("");
+
+      // Send via socket
+      socket.emit("send_message", { roomId: id, content: trimmed }, (err: string | null, msg: any) => {
+        if (err) {
+          // Fallback: use REST API
+          sendMutation.mutate({ roomId: id, data: { content: trimmed } });
+        } else if (msg) {
+          // Replace optimistic with real message
+          setMessages((prev) => prev.map(m => m.id === optimisticMsg.id ? msg : m));
+        }
+      });
+    } else {
+      // No socket: fall back to REST
+      sendMutation.mutate({ roomId: id, data: { content: trimmed } }, {
+        onSuccess: (msg) => {
+          setMessages((prev) => {
+            if (prev.some(m => m.id === msg.id)) return prev;
+            return [...prev, msg];
+          });
+        }
+      });
+      setContent("");
+    }
   };
 
-  if (isLoading && !messages) {
+  if (isLoading && !messages.length) {
     return (
       <div className="max-w-2xl mx-auto h-[calc(100vh-120px)] flex flex-col">
         <Skeleton className="h-16 w-full mb-4" />
@@ -72,19 +137,19 @@ export default function ChatRoom() {
           </div>
         </CardHeader>
 
-        <CardContent 
-          className="flex-1 overflow-y-auto p-4 space-y-4 bg-muted/10" 
+        <CardContent
+          className="flex-1 overflow-y-auto p-4 space-y-4 bg-muted/10"
           ref={scrollRef}
         >
-          {messages?.length === 0 ? (
+          {messages.length === 0 ? (
             <div className="h-full flex items-center justify-center text-muted-foreground text-sm">
               Start the conversation
             </div>
           ) : (
-            messages?.map((msg, idx) => {
+            messages.map((msg, idx) => {
               const isMine = msg.sender_id === user?.id;
-              const showTime = idx === 0 || new Date(msg.created_at).getTime() - new Date(messages[idx-1].created_at).getTime() > 5 * 60 * 1000;
-              
+              const showTime = idx === 0 || new Date(msg.created_at).getTime() - new Date(messages[idx-1]?.created_at).getTime() > 5 * 60 * 1000;
+
               if (msg.message_type === 'system') {
                 return (
                   <div key={msg.id} className="flex justify-center my-4">
@@ -102,10 +167,10 @@ export default function ChatRoom() {
                       {format(new Date(msg.created_at), "MMM d, h:mm a")}
                     </span>
                   )}
-                  <div 
+                  <div
                     className={`max-w-[80%] px-4 py-2 rounded-2xl ${
-                      isMine 
-                        ? 'bg-primary text-primary-foreground rounded-tr-sm' 
+                      isMine
+                        ? 'bg-primary text-primary-foreground rounded-tr-sm'
                         : 'bg-card border shadow-sm rounded-tl-sm'
                     }`}
                   >
@@ -119,8 +184,8 @@ export default function ChatRoom() {
 
         <CardFooter className="p-3 bg-card border-t">
           <form onSubmit={handleSend} className="flex w-full gap-2">
-            <Input 
-              placeholder="Type a message..." 
+            <Input
+              placeholder="Type a message..."
               value={content}
               onChange={(e) => setContent(e.target.value)}
               className="flex-1 bg-muted/30 focus-visible:ring-1 focus-visible:bg-transparent"
