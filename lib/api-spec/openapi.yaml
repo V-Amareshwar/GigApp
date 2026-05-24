@@ -3,20 +3,38 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: GigWork — Gig-based local work marketplace API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: auth
+    description: Authentication operations
+  - name: users
+    description: User profile operations
+  - name: jobs
+    description: Job listing operations
+  - name: applications
+    description: Job application operations
+  - name: reviews
+    description: Review operations
+  - name: chat
+    description: Chat operations
+  - name: notifications
+    description: Notification operations
+  - name: categories
+    description: Category operations
+  - name: stats
+    description: Dashboard statistics
+
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,13 +42,1355 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  # ── AUTH ─────────────────────────────────────────────────────────────────────
+  /v1/auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Login with phone number (mock OTP for web)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginInput"
+      responses:
+        "200":
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "400":
+          description: Invalid credentials
+
+  /v1/auth/register:
+    post:
+      operationId: register
+      tags: [auth]
+      summary: Register a new user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterInput"
+      responses:
+        "201":
+          description: User registered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "400":
+          description: Phone already registered
+
+  /v1/auth/logout:
+    post:
+      operationId: logout
+      tags: [auth]
+      summary: Logout current user
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Logged out
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+
+  # ── USERS ─────────────────────────────────────────────────────────────────────
+  /v1/users/me:
+    get:
+      operationId: getMe
+      tags: [users]
+      summary: Get current user profile
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserProfile"
+
+    patch:
+      operationId: updateMe
+      tags: [users]
+      summary: Update current user profile
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserUpdate"
+      responses:
+        "200":
+          description: Updated user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserProfile"
+
+  /v1/users/me/role:
+    put:
+      operationId: switchRole
+      tags: [users]
+      summary: Switch between seeker and provider role
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RoleInput"
+      responses:
+        "200":
+          description: Role switched
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserProfile"
+
+  /v1/users/{userId}:
+    get:
+      operationId: getUserById
+      tags: [users]
+      summary: Get public profile of a user
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: User public profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserProfile"
+        "404":
+          description: User not found
+
+  # ── CATEGORIES ────────────────────────────────────────────────────────────────
+  /v1/categories:
+    get:
+      operationId: listCategories
+      tags: [categories]
+      summary: List all job categories
+      responses:
+        "200":
+          description: Categories list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Category"
+
+  # ── JOBS ─────────────────────────────────────────────────────────────────────
+  /v1/jobs:
+    get:
+      operationId: listJobs
+      tags: [jobs]
+      summary: List active jobs (filterable by city, category, work type)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: city
+          in: query
+          schema:
+            type: string
+        - name: category_id
+          in: query
+          schema:
+            type: ["integer", "null"]
+        - name: work_type
+          in: query
+          schema:
+            type: ["string", "null"]
+            enum: [hourly, daily, monthly, null]
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        "200":
+          description: Jobs list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobListResponse"
+
+    post:
+      operationId: createJob
+      tags: [jobs]
+      summary: Post a new job (provider only)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JobInput"
+      responses:
+        "201":
+          description: Job created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "400":
+          description: Validation error or scam detected
+        "403":
+          description: Provider role required
+
+  /v1/jobs/search:
+    get:
+      operationId: searchJobs
+      tags: [jobs]
+      summary: Full text search jobs
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: city
+          in: query
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+      responses:
+        "200":
+          description: Search results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobListResponse"
+
+  /v1/jobs/my:
+    get:
+      operationId: listMyJobs
+      tags: [jobs]
+      summary: List jobs posted by current provider
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: ["string", "null"]
+            enum: [draft, active, paused, filled, expired, removed, null]
+      responses:
+        "200":
+          description: My posted jobs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Job"
+
+  /v1/jobs/{jobId}:
+    get:
+      operationId: getJob
+      tags: [jobs]
+      summary: Get full job detail
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Job detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "404":
+          description: Job not found
+
+    patch:
+      operationId: updateJob
+      tags: [jobs]
+      summary: Update a job (provider only, own jobs)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JobUpdate"
+      responses:
+        "200":
+          description: Updated job
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "403":
+          description: Not your job
+        "404":
+          description: Job not found
+
+    delete:
+      operationId: deleteJob
+      tags: [jobs]
+      summary: Remove a job (soft delete)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Job removed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+
+  /v1/jobs/{jobId}/report:
+    post:
+      operationId: reportJob
+      tags: [jobs]
+      summary: Report a suspicious job
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReportInput"
+      responses:
+        "200":
+          description: Report submitted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+
+  # ── APPLICATIONS ──────────────────────────────────────────────────────────────
+  /v1/jobs/{jobId}/apply:
+    post:
+      operationId: applyToJob
+      tags: [applications]
+      summary: Apply to a job (seeker only)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "201":
+          description: Application submitted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Application"
+        "400":
+          description: Already applied or job not active
+        "403":
+          description: Seeker role required
+
+  /v1/jobs/{jobId}/applications:
+    get:
+      operationId: listJobApplications
+      tags: [applications]
+      summary: List applicants for a job (provider only, own job)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Applicants list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Application"
+
+  /v1/applications/mine:
+    get:
+      operationId: listMyApplications
+      tags: [applications]
+      summary: List current seeker's applications
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: ["string", "null"]
+            enum: [pending, accepted, rejected, withdrawn, completed, null]
+      responses:
+        "200":
+          description: My applications
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Application"
+
+  /v1/applications/{applicationId}/accept:
+    put:
+      operationId: acceptApplication
+      tags: [applications]
+      summary: Accept an application (provider only)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: applicationId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Application accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Application"
+
+  /v1/applications/{applicationId}/reject:
+    put:
+      operationId: rejectApplication
+      tags: [applications]
+      summary: Reject an application (provider only)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: applicationId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RejectInput"
+      responses:
+        "200":
+          description: Application rejected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Application"
+
+  /v1/applications/{applicationId}/withdraw:
+    put:
+      operationId: withdrawApplication
+      tags: [applications]
+      summary: Withdraw own application (seeker only)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: applicationId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Application withdrawn
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Application"
+
+  # ── REVIEWS ──────────────────────────────────────────────────────────────────
+  /v1/reviews:
+    post:
+      operationId: createReview
+      tags: [reviews]
+      summary: Submit a review after job completion
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReviewInput"
+      responses:
+        "201":
+          description: Review submitted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Review"
+        "400":
+          description: Already reviewed or not eligible
+
+  /v1/users/{userId}/reviews:
+    get:
+      operationId: listUserReviews
+      tags: [reviews]
+      summary: List reviews for a user
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Reviews list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Review"
+
+  # ── CHAT ──────────────────────────────────────────────────────────────────────
+  /v1/chat/rooms:
+    get:
+      operationId: listChatRooms
+      tags: [chat]
+      summary: List chat rooms for current user
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Chat rooms
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ChatRoom"
+
+  /v1/chat/rooms/{roomId}/messages:
+    get:
+      operationId: getChatMessages
+      tags: [chat]
+      summary: List messages in a chat room
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Messages
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ChatMessage"
+
+    post:
+      operationId: sendMessage
+      tags: [chat]
+      summary: Send a message in a chat room
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessageInput"
+      responses:
+        "201":
+          description: Message sent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatMessage"
+
+  # ── NOTIFICATIONS ─────────────────────────────────────────────────────────────
+  /v1/notifications:
+    get:
+      operationId: listNotifications
+      tags: [notifications]
+      summary: List notifications for current user
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: unread_only
+          in: query
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: Notifications
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Notification"
+
+  /v1/notifications/mark-read:
+    put:
+      operationId: markNotificationsRead
+      tags: [notifications]
+      summary: Mark all notifications as read
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Marked read
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+
+  # ── STATS (WOW ENDPOINTS) ─────────────────────────────────────────────────────
+  /v1/stats/provider-dashboard:
+    get:
+      operationId: getProviderDashboard
+      tags: [stats]
+      summary: Provider dashboard stats (active jobs, total hires, applications)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Provider dashboard stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProviderDashboardStats"
+
+  /v1/stats/seeker-dashboard:
+    get:
+      operationId: getSeekerDashboard
+      tags: [stats]
+      summary: Seeker dashboard stats (applications, completions, rating)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Seeker dashboard stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SeekerDashboardStats"
+
+  /v1/stats/job-activity/{jobId}:
+    get:
+      operationId: getJobActivity
+      tags: [stats]
+      summary: Job activity breakdown (views, applications by day)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Job activity stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobActivity"
+
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
   schemas:
     HealthStatus:
       type: object
+      required: [status]
       properties:
         status:
           type: string
-      required:
-        - status
 
+    MessageResponse:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+
+    # ── AUTH SCHEMAS ─────────────────────────────────────────────────────────────
+    LoginInput:
+      type: object
+      required: [phone, password]
+      properties:
+        phone:
+          type: string
+        password:
+          type: string
+
+    RegisterInput:
+      type: object
+      required: [phone, name, password, role]
+      properties:
+        phone:
+          type: string
+        name:
+          type: string
+        password:
+          type: string
+        city:
+          type: string
+        role:
+          type: string
+          enum: [seeker, provider]
+
+    AuthResponse:
+      type: object
+      required: [access_token, user]
+      properties:
+        access_token:
+          type: string
+        is_new_user:
+          type: boolean
+        user:
+          $ref: "#/components/schemas/UserProfile"
+
+    # ── USER SCHEMAS ─────────────────────────────────────────────────────────────
+    UserProfile:
+      type: object
+      required: [id, phone, current_role, created_at]
+      properties:
+        id:
+          type: string
+        phone:
+          type: string
+        name:
+          type: ["string", "null"]
+        profile_photo_url:
+          type: ["string", "null"]
+        city:
+          type: ["string", "null"]
+        current_role:
+          type: string
+          enum: [seeker, provider]
+        is_phone_verified:
+          type: boolean
+        is_id_verified:
+          type: boolean
+        trust_score:
+          type: number
+        is_banned:
+          type: boolean
+        seeker_profile:
+          $ref: "#/components/schemas/SeekerProfile"
+        provider_profile:
+          $ref: "#/components/schemas/ProviderProfile"
+        created_at:
+          type: string
+
+    SeekerProfile:
+      type: object
+      properties:
+        bio:
+          type: ["string", "null"]
+        availability:
+          type: string
+          enum: [immediate, within_week, flexible]
+        preferred_work_type:
+          type: string
+          enum: [hourly, daily, monthly, any]
+        salary_expectation:
+          type: ["integer", "null"]
+        years_experience:
+          type: integer
+        total_jobs_completed:
+          type: integer
+        avg_rating:
+          type: number
+        total_ratings:
+          type: integer
+        attendance_score:
+          type: number
+        skills:
+          type: array
+          items:
+            type: string
+
+    ProviderProfile:
+      type: object
+      properties:
+        business_name:
+          type: ["string", "null"]
+        business_type:
+          type: ["string", "null"]
+        total_jobs_posted:
+          type: integer
+        total_hires:
+          type: integer
+        avg_rating:
+          type: number
+        total_ratings:
+          type: integer
+        avg_response_hours:
+          type: ["number", "null"]
+        hiring_success_rate:
+          type: number
+
+    UserUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        city:
+          type: string
+        profile_photo_url:
+          type: string
+        bio:
+          type: string
+        availability:
+          type: string
+          enum: [immediate, within_week, flexible]
+        preferred_work_type:
+          type: string
+          enum: [hourly, daily, monthly, any]
+        salary_expectation:
+          type: integer
+        years_experience:
+          type: integer
+        skills:
+          type: array
+          items:
+            type: string
+        business_name:
+          type: string
+        business_type:
+          type: string
+
+    RoleInput:
+      type: object
+      required: [role]
+      properties:
+        role:
+          type: string
+          enum: [seeker, provider]
+
+    # ── CATEGORY SCHEMAS ─────────────────────────────────────────────────────────
+    Category:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        name_hi:
+          type: ["string", "null"]
+        icon_name:
+          type: ["string", "null"]
+        sort_order:
+          type: integer
+
+    # ── JOB SCHEMAS ──────────────────────────────────────────────────────────────
+    Job:
+      type: object
+      required: [id, title, work_type, city, status, created_at]
+      properties:
+        id:
+          type: string
+        provider_id:
+          type: string
+        title:
+          type: string
+        description:
+          type: ["string", "null"]
+        category_id:
+          type: ["integer", "null"]
+        category:
+          $ref: "#/components/schemas/Category"
+        work_type:
+          type: string
+          enum: [hourly, daily, monthly]
+        # hourly
+        hourly_rate:
+          type: ["integer", "null"]
+        total_hours:
+          type: ["integer", "null"]
+        shift_start_time:
+          type: ["string", "null"]
+        shift_end_time:
+          type: ["string", "null"]
+        same_day_payment:
+          type: ["boolean", "null"]
+        urgent_hiring:
+          type: ["boolean", "null"]
+        # daily
+        daily_wage:
+          type: ["integer", "null"]
+        num_working_days:
+          type: ["integer", "null"]
+        food_included:
+          type: ["boolean", "null"]
+        accommodation_included:
+          type: ["boolean", "null"]
+        overtime_available:
+          type: ["boolean", "null"]
+        # monthly
+        monthly_salary:
+          type: ["integer", "null"]
+        joining_date:
+          type: ["string", "null"]
+        experience_required:
+          type: ["integer", "null"]
+        working_days_per_week:
+          type: ["integer", "null"]
+        pf_esi_included:
+          type: ["boolean", "null"]
+        salary_negotiable:
+          type: ["boolean", "null"]
+        # location
+        city:
+          type: string
+        address:
+          type: ["string", "null"]
+        latitude:
+          type: ["number", "null"]
+        longitude:
+          type: ["number", "null"]
+        # status
+        status:
+          type: string
+          enum: [draft, active, paused, filled, expired, removed]
+        is_urgent:
+          type: boolean
+        is_verified:
+          type: boolean
+        views_count:
+          type: integer
+        applications_count:
+          type: integer
+        skills_required:
+          type: array
+          items:
+            type: string
+        provider:
+          $ref: "#/components/schemas/UserProfile"
+        expires_at:
+          type: ["string", "null"]
+        created_at:
+          type: string
+        has_applied:
+          type: ["boolean", "null"]
+
+    JobInput:
+      type: object
+      required: [title, work_type, city]
+      properties:
+        title:
+          type: string
+        category_id:
+          type: ["integer", "null"]
+        description:
+          type: string
+        work_type:
+          type: string
+          enum: [hourly, daily, monthly]
+        hourly_rate:
+          type: ["integer", "null"]
+        total_hours:
+          type: ["integer", "null"]
+        shift_start_time:
+          type: ["string", "null"]
+        shift_end_time:
+          type: ["string", "null"]
+        same_day_payment:
+          type: ["boolean", "null"]
+        urgent_hiring:
+          type: ["boolean", "null"]
+        daily_wage:
+          type: ["integer", "null"]
+        num_working_days:
+          type: ["integer", "null"]
+        food_included:
+          type: ["boolean", "null"]
+        accommodation_included:
+          type: ["boolean", "null"]
+        overtime_available:
+          type: ["boolean", "null"]
+        monthly_salary:
+          type: ["integer", "null"]
+        joining_date:
+          type: ["string", "null"]
+        experience_required:
+          type: ["integer", "null"]
+        working_days_per_week:
+          type: ["integer", "null"]
+        pf_esi_included:
+          type: ["boolean", "null"]
+        salary_negotiable:
+          type: ["boolean", "null"]
+        city:
+          type: string
+        address:
+          type: string
+        latitude:
+          type: ["number", "null"]
+        longitude:
+          type: ["number", "null"]
+        is_urgent:
+          type: boolean
+        skills_required:
+          type: array
+          items:
+            type: string
+
+    JobUpdate:
+      type: object
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        daily_wage:
+          type: ["integer", "null"]
+        hourly_rate:
+          type: ["integer", "null"]
+        monthly_salary:
+          type: ["integer", "null"]
+        is_urgent:
+          type: boolean
+        status:
+          type: string
+          enum: [draft, active, paused, filled, expired, removed]
+        food_included:
+          type: ["boolean", "null"]
+        accommodation_included:
+          type: ["boolean", "null"]
+
+    JobListResponse:
+      type: object
+      required: [jobs, total, page, limit]
+      properties:
+        jobs:
+          type: array
+          items:
+            $ref: "#/components/schemas/Job"
+        total:
+          type: integer
+        page:
+          type: integer
+        limit:
+          type: integer
+        has_more:
+          type: boolean
+
+    ReportInput:
+      type: object
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          enum: [fake_salary, scam, spam, inappropriate, already_filled, other]
+        description:
+          type: string
+
+    # ── APPLICATION SCHEMAS ───────────────────────────────────────────────────────
+    Application:
+      type: object
+      required: [id, job_id, seeker_id, status, applied_at]
+      properties:
+        id:
+          type: string
+        job_id:
+          type: string
+        seeker_id:
+          type: string
+        status:
+          type: string
+          enum: [pending, accepted, rejected, withdrawn, completed]
+        employer_note:
+          type: ["string", "null"]
+        applied_at:
+          type: string
+        responded_at:
+          type: ["string", "null"]
+        completed_at:
+          type: ["string", "null"]
+        job:
+          $ref: "#/components/schemas/Job"
+        seeker:
+          $ref: "#/components/schemas/UserProfile"
+        chat_room_id:
+          type: ["string", "null"]
+
+    RejectInput:
+      type: object
+      properties:
+        employer_note:
+          type: string
+
+    # ── REVIEW SCHEMAS ────────────────────────────────────────────────────────────
+    Review:
+      type: object
+      required: [id, reviewer_id, reviewee_id, rating, reviewer_role, created_at]
+      properties:
+        id:
+          type: string
+        application_id:
+          type: ["string", "null"]
+        reviewer_id:
+          type: string
+        reviewee_id:
+          type: string
+        reviewer_role:
+          type: string
+          enum: [seeker, provider]
+        rating:
+          type: integer
+        comment:
+          type: ["string", "null"]
+        reviewer:
+          $ref: "#/components/schemas/UserProfile"
+        created_at:
+          type: string
+
+    ReviewInput:
+      type: object
+      required: [application_id, reviewee_id, rating, reviewer_role]
+      properties:
+        application_id:
+          type: string
+        reviewee_id:
+          type: string
+        reviewer_role:
+          type: string
+          enum: [seeker, provider]
+        rating:
+          type: integer
+        comment:
+          type: string
+
+    # ── CHAT SCHEMAS ──────────────────────────────────────────────────────────────
+    ChatRoom:
+      type: object
+      required: [id, seeker_id, provider_id, created_at]
+      properties:
+        id:
+          type: string
+        application_id:
+          type: ["string", "null"]
+        seeker_id:
+          type: string
+        provider_id:
+          type: string
+        last_message_at:
+          type: ["string", "null"]
+        last_message:
+          type: ["string", "null"]
+        unread_count:
+          type: integer
+        other_user:
+          $ref: "#/components/schemas/UserProfile"
+        job:
+          $ref: "#/components/schemas/Job"
+        created_at:
+          type: string
+
+    ChatMessage:
+      type: object
+      required: [id, room_id, sender_id, content, created_at]
+      properties:
+        id:
+          type: string
+        room_id:
+          type: string
+        sender_id:
+          type: string
+        message_type:
+          type: string
+          enum: [text, system]
+        content:
+          type: string
+        is_read:
+          type: boolean
+        sender:
+          $ref: "#/components/schemas/UserProfile"
+        created_at:
+          type: string
+
+    MessageInput:
+      type: object
+      required: [content]
+      properties:
+        content:
+          type: string
+
+    # ── NOTIFICATION SCHEMAS ──────────────────────────────────────────────────────
+    Notification:
+      type: object
+      required: [id, user_id, type, is_read, created_at]
+      properties:
+        id:
+          type: string
+        user_id:
+          type: string
+        type:
+          type: string
+        title:
+          type: ["string", "null"]
+        body:
+          type: ["string", "null"]
+        is_read:
+          type: boolean
+        job_id:
+          type: ["string", "null"]
+        application_id:
+          type: ["string", "null"]
+        created_at:
+          type: string
+
+    # ── STATS SCHEMAS ─────────────────────────────────────────────────────────────
+    ProviderDashboardStats:
+      type: object
+      required: [active_jobs, total_applications, total_hires, pending_applications, jobs_by_status]
+      properties:
+        active_jobs:
+          type: integer
+        total_applications:
+          type: integer
+        total_hires:
+          type: integer
+        pending_applications:
+          type: integer
+        avg_rating:
+          type: number
+        hiring_success_rate:
+          type: number
+        jobs_by_status:
+          type: array
+          items:
+            $ref: "#/components/schemas/StatusCount"
+        recent_applications:
+          type: array
+          items:
+            $ref: "#/components/schemas/Application"
+
+    SeekerDashboardStats:
+      type: object
+      required: [total_applied, pending_count, accepted_count, completed_count, avg_rating]
+      properties:
+        total_applied:
+          type: integer
+        pending_count:
+          type: integer
+        accepted_count:
+          type: integer
+        completed_count:
+          type: integer
+        avg_rating:
+          type: number
+        trust_score:
+          type: number
+        total_jobs_completed:
+          type: integer
+        attendance_score:
+          type: number
+
+    StatusCount:
+      type: object
+      required: [status, count]
+      properties:
+        status:
+          type: string
+        count:
+          type: integer
+
+    JobActivity:
+      type: object
+      required: [job_id, total_views, total_applications, applications_by_day]
+      properties:
+        job_id:
+          type: string
+        total_views:
+          type: integer
+        total_applications:
+          type: integer
+        applications_by_day:
+          type: array
+          items:
+            $ref: "#/components/schemas/DayCount"
+        status_breakdown:
+          type: array
+          items:
+            $ref: "#/components/schemas/StatusCount"
+
+    DayCount:
+      type: object
+      required: [date, count]
+      properties:
+        date:
+          type: string
+        count:
+          type: integer
